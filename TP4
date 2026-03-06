@@ -1,0 +1,368 @@
+import numpy as np
+import math as mt
+from numpy import linalg
+import matplotlib.pyplot as plt
+from pylab import *
+
+Tmax = 0.5
+Kmax = 20
+B1 = 1
+B2 = 1
+r = 0.1
+S0 = 10
+N = 199
+M = 49
+h = 0.1
+
+K = np.linspace(0, Kmax, N+2)
+dK = Kmax/(N+1)
+T = np.linspace(0, Tmax, M+2)
+dT = Tmax/(M+1)
+
+"""sigma_loc = 0.3
+sigma_loc = 1/K
+sigma_loc = np.zeros((M+2, N+2))
+for n in range(M+2):
+     sigma_loc[n, :] = np.exp(-T[n]/Tmax) * K/Kmax
+
+sigma_loc = 0.3       
+sigma_loc = 1/K
+sigma_loc = np.array([np.exp(-T[n]/Tmax) * K/Kmax for n in range(M+2)])"""
+
+def Euler():
+
+    # Condition initiale
+    V = [[0 for j in range(N+2)] for i in range(M+2)]
+    for i in range(N+2):
+        V[0][i] = max(S0 - K[i], 0)
+
+    # Conditions aux limites
+    for n in range(M+2):
+        V[n][0] = S0
+        V[n][N+1] = 0
+    
+    # Euler
+    for n in range(0, M+1):
+        for i in range(1, N+1):
+
+            dVdK = (V[n][i+1] - V[n][i-1])/(2*dK)
+            d2VdK2 = (V[n][i+1] - 2*V[n][i] + V[n][i-1])/(dK**2)
+
+            # Choix du sigma
+            if isinstance(sigma_loc, (int, float)):
+                sigma_val = sigma_loc
+            elif sigma_loc.ndim == 1:
+                sigma_val = sigma_loc[i]
+            else:
+                sigma_val = sigma_loc[n][i]
+
+            # Calcul explicite du coursl
+            V[n+1][i] = (
+                V[n][i]
+                + dT * (
+                    -r*K[i] * dVdK
+                    + 0.5 * (sigma_val)**2 * K[i]**2 * d2VdK2
+                )
+            )
+
+    # Plot: Solution à T=Tmax et le payoff
+    plt.plot(K, V[M+1], label="T = T_max")
+    plt.plot(K, V[0], label="Payoff")
+    plt.legend()
+    plt.xlabel("Strike K")
+    plt.ylabel("V(K,T)")
+    plt.grid()
+    plt.show()
+
+    # Plot surface 3D
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+
+    KK, TT = np.meshgrid(K, T)
+
+    V_array = np.array(V)
+
+    ax.plot_surface(KK, TT, V_array, cmap="viridis")
+    ax.set_xlabel("K")
+    ax.set_ylabel("T")
+    ax.set_zlabel("V")
+    plt.title("Surface de prix via Euler")
+    plt.show()
+
+    return V
+
+#V = Euler()
+
+
+def prix_dupire(sigma):
+   
+    # Condition initiale
+    V = [[0 for j in range(N+2)] for i in range(M+2)]
+    for i in range(N+2):
+        V[0][i] = max(S0 - K[i], 0)
+
+    # Conditions aux limites
+    for n in range(M+2):
+        V[n][0] = S0
+        V[n][N+1] = 0
+    
+    #Crank-Nicolson
+
+    # On initialise les tous les coefficients à 0
+    A = [0 for i in range(N+1)]
+    B = [0 for i in range(N+1)]
+    D = [0 for i in range(N+1)]
+    C = [[0 for j in range(N+1)] for i in range(M+1)]
+
+    # Calcul des facteurs de l'équation de Crank-Nicolson
+    for i in range(1,N+1): 
+        A[i] = (dT/4)*(K[i]*r/dK - ((sigma[i]*K[i]/dK)**2))
+        B[i] = -(dT/4)*(K[i]*r/dK + ((sigma[i]*K[i])/dK)**2)
+        D[i] = 1 + (dT/2)*((sigma[i]*K[i]/dK)**2)
+    
+    # Initilisation de C* et D*
+    Cstar = [[0 for j in range(N+1)] for i in range(M+1)]
+    Dstar = np.zeros(N+1)
+    
+    # Algorithme de Thomas avec la méthode de Cn
+    for n in range(M+1):
+        for i in range(1,N+1):
+            if i==1:
+                # Cas spécial si notre i vaut 1 on rajoute S0 * B2
+                C[n][i]=-(dT/4)*(K[i]*r/dK - ((sigma[i]**2) * (K[i]**2))/(dK**2))*V[n][i+1] + (1-dT/2*(sigma[i]**2)*(K[i]**2)/(dK**2))*V[n][i] + dT/4*(r*K[i]/dK + (sigma[i]**2) * (K[i]**2) /(dK**2))*V[n][i-1] - S0*B[2]
+            else:
+                C[n][i]=-(dT/4)*(K[i]*r/dK - ((sigma[i]**2) * (K[i]**2))/(dK**2))*V[n][i+1] + (1-dT/2*(sigma[i]**2)*(K[i]**2)/(dK**2))*V[n][i] + dT/4*(r*K[i]/dK + (sigma[i]**2) * (K[i]**2) /(dK**2))*V[n][i-1] 
+        
+        # Attribution des valeurs pour C et D
+        Cstar[n][1] =  C[n][1] 
+        Dstar[1] = D[1] 
+        
+        # Calcul des valeurs pour D* et C*
+        for i in range(2,N+1):
+            Dstar[i] = D[i] - (B[i] * A[i-1] / Dstar[i-1])
+            Cstar[n][i] = C[n][i]- (B[i] * Cstar[n][i-1] / Dstar[i-1])
+        
+        # Valeur de l'actif actualisé
+        V[n+1][N] = Cstar[n][N] / Dstar[N]
+        
+        # Cacul final de la valeur de l'actif
+        for i in range(N-1,0,-1):
+            V[n+1][i] = (Cstar[n][i] -A[i] * V[n+1][i+1])/ Dstar[i]
+    return V
+
+def grapheDupire(V, title): 
+    fig, axs = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle(title, fontsize=16)  # Titre global pour distinguer les cas
+    
+    # Graphique t=0
+    axs[0, 0].plot(K, V[0], label='t=0')
+    axs[0, 0].set_title('Pricing Call Dupire t=0')
+    axs[0, 0].set_xlabel('Strike K')
+    axs[0, 0].set_ylabel('Prix V(t,K)')
+    axs[0, 0].legend()
+
+    # Graphique t=T/2
+    axs[0, 1].plot(K[3:], V[int((M)/2)][3:], label='t=T/2')
+    axs[0, 1].set_title('Pricing Call Dupire t=T/2')
+    axs[0, 1].set_xlabel('Strike K')
+    axs[0, 1].set_ylabel('Prix V(t,K)')
+    axs[0, 1].legend()
+
+    # Graphique t=T
+    axs[1, 0].plot(K[3:], V[M][3:], label='t=T')
+    axs[1, 0].set_title('Pricing Call Dupire t=T')
+    axs[1, 0].set_xlabel('Strike K')
+    axs[1, 0].set_ylabel('Prix V(t,K)')
+    axs[1, 0].legend()
+
+    # Surface 3D dans le dernier subplot
+    X1, Y1 = np.meshgrid(K, T)
+    Z1 = np.array(V)
+    ax3d = fig.add_subplot(2, 2, 4, projection="3d")
+    ax3d.plot_surface(X1, Y1, Z1, cmap=plt.cm.coolwarm, alpha=0.8)
+    ax3d.set_title('Surface Pricing Call Dupire')
+    ax3d.set_xlabel('Strike K')
+    ax3d.set_ylabel('Maturité T')
+    ax3d.set_zlabel('Prix V(K,T)')
+
+    # Ajustement des espacements
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Laisser de la place pour le titre global
+    plt.show()
+
+
+# Cas 1: Dupire avec sigma constant
+sig = [0.3 for i in range(N+2)]
+V = prix_dupire(sig)
+#grapheDupire(V, title="Dupire pour σ = 0.3 (constante)")
+
+# Cas 2: Dupire avec sigma local
+sig = [B1 / ((K[i] if K[i] != 0 else 1e-8)**B2) + h for i in range(N+2)]
+V = prix_dupire(sig)
+#grapheDupire(V, title="Dupire pour σ = B1/(K^B2) + h")
+
+# Même structutre que grapheDupire
+def grapheVega(V, title): 
+    fig, axs = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle(title, fontsize=16) 
+    
+    # Graphique t=0
+    axs[0, 0].plot(K, V[0], label='t=0')
+    axs[0, 0].set_title('Vega Dupire t=0')
+    axs[0, 0].set_xlabel('Strike K')
+    axs[0, 0].set_ylabel('Volatilité')
+    axs[0, 0].legend()
+
+    # Graphique t=T/2
+    axs[0, 1].plot(K[3:], V[int((M)/2)][3:], label='t=T/2')
+    axs[0, 1].set_title('Vega Dupire t=T/2')
+    axs[0, 1].set_xlabel('Strike K')
+    axs[0, 1].set_ylabel('Volatilité')
+    axs[0, 1].legend()
+
+    # Graphique t=T
+    axs[1, 0].plot(K[3:], V[M][3:], label='t=T')
+    axs[1, 0].set_title('Vega Dupire t=T')
+    axs[1, 0].set_xlabel('Strike K')
+    axs[1, 0].set_ylabel('Volatilité')
+    axs[1, 0].legend()
+
+    # Surface 3D dans le dernier subplot
+    X1, Y1 = np.meshgrid(K, T)
+    Z1 = np.array(V)
+    ax3d = fig.add_subplot(2, 2, 4, projection="3d")
+    ax3d.plot_surface(X1, Y1, Z1, cmap=plt.cm.coolwarm, alpha=0.8)
+    ax3d.set_title('Surface Vega Dupire')
+    ax3d.set_xlabel('Strike K')
+    ax3d.set_ylabel('Maturité T')
+    ax3d.set_zlabel('Volatilité')
+
+    # Ajustement des espacements
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Laisser de la place pour le titre global
+    plt.show()
+
+# Par encore tester
+def vega_dupire(sigma, h, title=None):
+    # Prix Dupire avec 0, B1, B2
+    V = prix_dupire(sigma)
+    sigmah = [sigma[i] + h for i in range(N+2)]
+    # Prix Dupire avec h, B1, B2
+    V_dilate = prix_dupire(sigmah)
+    Vega = [np.zeros(N+2) for i in range(M+2)]
+    for n in range(M+2):
+        for i in range(N+2):
+            Vega[n][i] = (V_dilate[n][i] - V[n][i]) / h
+    grapheVega(Vega, title)
+
+
+# Cas 1 : Vega Dupire avec sigma constant
+sig = [0.3 for i in range(N+2)]
+#vega_dupire(sig, h, title="Vega Dupire pour σ = 0.3 (constante)")
+
+# Cas 2 : Vega Dupire avec une loi inverse
+sig = [B1 / ((K[i] if K[i] != 0 else 1e-8)**B2) + h for i in range(N+2)]
+#vega_dupire(sig, h, title="Vega Dupire pour σ = B1/(K^B2) + h")
+
+
+
+# Partie 2
+def Prix_Dupires_Utiles(K):
+    # Meilleur prix de Dupire   
+    res=int((K/dK))
+    return res
+
+def Levenberg_Maquardt(Vp, Kp):
+    # Intialisation des données
+    beta = [1, 1]
+    d = [1, 1]
+    k = 0
+    eps = 10**(-5)
+    lmbda = 0.001
+    V_dupire = np.zeros(len(Vp))
+    V_market = np.zeros(len(Vp))
+    vega = np.zeros(len(Vp))
+    residu = np.zeros(len(Vp))
+    J = np.array([np.zeros(2) for i in range(len(Vp))])
+
+    while linalg.norm(d) > eps:
+        for p in range(len(Vp)):
+            # Calcul de la volatilité locale
+            sigma = [(beta[0] / (K[i]**beta[1])) for i in range(N+2)]
+            # Calcul de volatilité local + h
+            sigmah = [h + sigma[i] for i in range(N+2)]
+
+            # Valeur de l'option selon la volatilité local
+            V_surface = prix_dupire(sigma)
+            V_dilate = prix_dupire(sigmah)
+            # Valeur de l'option avec la volatilité selon les différentes valeurs du strike
+            j = Prix_Dupires_Utiles(Kp[p])
+            V_dupire[p] = V_surface[M+1][j]
+            V_market[p] = V_dilate[M+1][j]
+            
+            # Vega dupire de l'espace discritisé
+            vega[p] = -(V_dupire[p] - V_market[p]) / h
+
+            # Stockage du résidus entre la marché moins la valeur selon la valeur de Dupire 
+            residu[p] = Vp[p] - V_dupire[p]
+
+            # Calcul du Jacobien
+            J[p][0] = vega[p] / (Kp[p]**beta[1])
+            J[p][1] = -vega[p] * np.log(Kp[p]) * beta[0] / (Kp[p]**beta[1])
+
+        # Mise à jour des paramètres par calibration de Levenberg-Marquardt
+        # Calcul de la direction de descente avec la matrice Hessienne
+        d = np.dot(
+            -linalg.inv(np.dot(J.transpose(), J) + lmbda * np.identity(2)),
+            np.dot(J.transpose(), residu)
+        )
+        # Calcul du béta
+        beta = beta + d.transpose()    
+        k += 1  # Incrémentation du compteur
+
+    print('Beta1 =', beta[0])
+    print('Beta2 =', beta[1])
+    print('Nombre d iterations :', k)
+
+
+    # Graphiques
+    plt.plot(Kp, Vp, 'o', label='V_marche')
+    plt.plot(Kp, V_dupire, label='V_Dupire')
+    plt.xlabel('K_marche')
+    plt.ylabel('V')
+    plt.title('Prix de marché - prix de dupire à T=T_max post calibration')
+    plt.legend()
+    plt.show()
+
+    # Plot Pricing Call
+    X1, Y1 = np.meshgrid(K, T)
+    Z1 = np.array(V_surface)
+    plt.rcParams["figure.figsize"] = [16, 9]
+    plt.figure()
+    ax = plt.axes(projection="3d")
+    ax.plot_surface(X1, Y1, Z1, cmap=plt.cm.coolwarm, alpha=0.8)
+    plt.title('Pricing Call EU post calibration')
+    ax.set_xlabel('K')
+    ax.set_ylabel('T')
+    ax.set_zlabel('V(K,T)')
+    plt.show()
+
+    # Plot de la surface de volatilité du Vega 
+    ZZ = np.subtract(np.array(V_dilate), np.array(V_surface)) / h
+    Z1 = np.array(ZZ)
+    plt.rcParams["figure.figsize"] = [16, 9]
+    plt.figure()
+    ax = plt.axes(projection="3d")
+    ax.plot_surface(X1, Y1, Z1, cmap=plt.cm.coolwarm, alpha=0.8)
+    plt.title('Pricing Vega Call 3D post calibration ')
+    ax.set_xlabel('K')
+    ax.set_ylabel('T')
+    ax.set_zlabel('Vega')
+    plt.show()
+
+
+
+# Différentes valeurs du strike
+Kp = [7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14]
+# Prix d'option de la valeur de marché 
+Vp = [3.3634, 2.9092, 2.4703, 2.0536, 1.6666, 1.3167,1.0100, 0.7504, 0.5389, 0.3733, 0.2491, 0.1599, 0.0986, 0.0584, 0.0332]
+
+Levenberg_Maquardt(Vp, Kp)
